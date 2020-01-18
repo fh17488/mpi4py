@@ -12,12 +12,12 @@ def main():
     dfs_meta = {}
     if rank == 0:  
         global_avg = np.zeros(T, dtype='d')       
-    conn = pymysql.connect(host  = "******",.rds.amazonaws.com",port = 3306,user = "******",",password = "******",db = "mpi")    
+    conn = pymysql.connect(host  = "mpi2.cqsthdahfs0e.eu-west-1.rds.amazonaws.com",port = 3306,user = "root",password = "farazfaraz",db = "mpi")    
     conn_handler = conn.cursor()
     conn_handler.execute("select * from metadata")
     dataframes = conn_handler.fetchall()
     N = len(dataframes)
-    for i in range(rank, int(2*rank), int(2*rank+N/R)):
+    for i in range(int(rank*N/R), int((rank+1)*N/R), 1):
         data = np.zeros((dataframes[i][1],dataframes[i][2]), dtype='d')
         df_meta = {'table_id':dataframes[i][0], 'rows':dataframes[i][1], 'cols':dataframes[i][2], 'avg': 0, 'data': data}
         conn_handler.execute("select row,col,value from data where table_id={0}".format(dataframes[i][0]))
@@ -29,7 +29,7 @@ def main():
     comm.Barrier()
     for i in range(T):
         iteration_avg = 0
-        for j in range(rank, int(2*rank), int(2*rank+N/R)):           
+        for j in range(int(rank*N/R), int((rank+1)*N/R), 1):           
             df = dfs_meta[j]['data']            
             new_col = np.zeros((df.shape[0], 1), dtype='d')
             df = np.column_stack((df,new_col))
@@ -39,13 +39,13 @@ def main():
             dfs_meta[j]['cols'] = df.shape[1]
             dfs_meta[j]['avg'] = np.mean(df)
             iteration_avg += dfs_meta[j]['avg']                                
-        iteration_avg /= N
+        iteration_avg /= N/R
         if rank == 0:
             send_buff = np.zeros(1, dtype='d')            
             recv_buff = np.zeros(1, dtype='d')
             send_buff[0] = iteration_avg
             comm.Reduce([send_buff, MPI.DOUBLE], [recv_buff, MPI.DOUBLE],
-            op=MPI.SUM, root=MPI.ROOT)
+            op=MPI.SUM, root=0)
             global_avg[i] = recv_buff[0]
             global_avg[i] /= R            
         else:
@@ -58,7 +58,7 @@ def main():
         print("The global average is: {0}".format(np.mean(np.mean(global_avg))))
         conn_handler.execute("INSERT INTO analytics (global_average) VALUES ({0}); ".format(np.mean(global_avg)))
         conn.commit()        
-    for i in range(rank, int(2*rank), int(2*rank+N/R)):       
+    for i in range(int(rank*N/R), int((rank+1)*N/R), 1):
         conn_handler.execute("update metadata set cols = {0} where table_id={1}".format(dfs_meta[i]['cols'], dfs_meta[i]['table_id']))
         conn_handler.execute("delete from data where table_id={0}".format(dfs_meta[i]['table_id']))                
         for j in range(dfs_meta[i]['rows']):
