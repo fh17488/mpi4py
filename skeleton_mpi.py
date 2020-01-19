@@ -7,7 +7,7 @@ def main():
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()    
     R = comm.Get_size()
-    T = 10 
+    T = 1
     N=8
     dfs_meta = {}
     if rank == 0:  
@@ -53,7 +53,17 @@ def main():
             send_buff[0] = iteration_avg
             comm.Reduce([send_buff, MPI.DOUBLE], None,
             op=MPI.SUM, root=0)
-        comm.Barrier()                
+        comm.Barrier() 
+        # MPI_SendRecv here: send/receive data for border data frames
+        buff_size = dfs_meta[int(((rank+1)*N/R)-1)]['data'][:,0].size
+        send_buff = np.zeros(buff_size,dtype='d')
+        recv_buff = np.zeros(buff_size,dtype='d')
+        np.copyto(send_buff, dfs_meta[int(((rank+1)*N/R)-1)]['data'][:,0])
+        comm.Sendrecv(send_buff,dest=((rank+1)%R), recvbuf=recv_buff,source=(R-1 if rank==0 else rank-1))               
+        # Rotate 1st column of all data frames with the rank
+        for j in range(int(((rank+1)*N/R)-1), int(rank*N/R), -1):
+             np.copyto(dfs_meta[j]['data'][:,0], dfs_meta[j-1]['data'][:,0])
+        np.copyto(dfs_meta[int(rank*N/R)]['data'][:,0], recv_buff)
     if rank == 0:
         print("The global average is: {0}".format(np.mean(np.mean(global_avg))))
         conn_handler.execute("INSERT INTO analytics (global_average) VALUES ({0}); ".format(np.mean(global_avg)))
@@ -64,9 +74,12 @@ def main():
         for j in range(dfs_meta[i]['rows']):
             for k in range(dfs_meta[i]['cols']):                                
                 conn_handler.execute("insert into data (table_id,row,col,value) values ({0},{1},{2},{3})".format(dfs_meta[i]['table_id'], j, k, dfs_meta[i]['data'][j][k]))
-        conn.commit() 
+        conn.commit()
     conn_handler.close()
     conn.close()
+    '''for i in range(int(rank*N/R), int((rank+1)*N/R), 1):
+        print(dfs_meta[i]['data'])
+        print("\n")'''
     print("done")
 
 if __name__ == '__main__':
